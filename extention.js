@@ -3489,9 +3489,24 @@
         filterMedia() { this.updateMediaList(); }
 
         async downloadBest() {
-            const hls = mediaCapture.getByType('HLS');
-            if (hls.length === 0) { Utils.notify('No HLS streams found', 'warning'); logger.log('No HLS streams found', 'warning'); return; }
-            await this.startDownload(hls[0].url);
+            const btn = document.getElementById('uadbp-dl-best');
+            if (!btn) return;
+
+            btn.disabled = true;
+            btn.innerHTML = '⬇️ Downloading...';
+
+            try {
+                const hls = mediaCapture.getByType('HLS');
+                if (hls.length === 0) {
+                    Utils.notify('No HLS streams found', 'warning');
+                    logger.log('No HLS streams found', 'warning');
+                    return;
+                }
+                await this.startDownload(hls[0].url);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '⬇️ Download Best HLS';
+            }
         }
 
         async startDownload(url) {
