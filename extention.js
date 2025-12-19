@@ -2045,12 +2045,11 @@
                 if (blob instanceof Blob) {
                     const type = blob.type || '';
                     if (type.includes('video') || type.includes('audio') || type.includes('mpegurl')) {
-                        self.blobCache.set(url, blob);
                         self.add(url, 'BLOB', {
                             blobType: type,
                             blobSize: blob.size,
                             sizeFormatted: Utils.formatBytes(blob.size)
-                        });
+                        }, blob);
                     }
                 }
                 return url;
@@ -2203,7 +2202,7 @@
             return mediaAnalyzer.isMedia(url);
         }
 
-        add(url, context, extra = {}) {
+        async add(url, context, extra = {}, blob = null) {
             if (!url || this.mediaUrls.has(url)) return;
 
             const info = mediaAnalyzer.detect(url);
@@ -2222,6 +2221,15 @@
                 domain: Utils.extractDomain(url)
             };
 
+            if (blob) {
+                if (STATE.isMainFrame) {
+                    this.blobCache.set(url, blob);
+                } else if (CONFIG.features.crossFrameCapture) {
+                    entry.blobData = await blob.arrayBuffer();
+                    entry.blobType = blob.type;
+                }
+            }
+
             this.mediaUrls.set(url, entry);
             headerManager.capture(url);
             logger.incrementStat('captures');
@@ -2231,7 +2239,7 @@
             logger.log(`${icon} Captured ${info.type}: ${shortUrl}`, 'capture');
 
             if (!STATE.isMainFrame && CONFIG.features.crossFrameCapture) {
-                messenger.send('UADBP_MEDIA_CAPTURED', entry);
+                messenger.send('UADBP_MEDIA_CAPTURED', entry, window.top);
             }
 
             Events.emit('media-update', { list: this.getList(), count: this.mediaUrls.size });
@@ -2240,11 +2248,21 @@
 
         addFromMessage(entry) {
             if (!entry?.url || this.mediaUrls.has(entry.url)) return;
+
             entry.fromFrame = true;
+
+            if (entry.blobData) {
+                const blob = new Blob([entry.blobData], { type: entry.blobType });
+                this.blobCache.set(entry.url, blob);
+                delete entry.blobData;
+            }
+
             this.mediaUrls.set(entry.url, entry);
+
             if (entry.type !== 'SEGMENT') {
                 logger.log(`📨 Received from iframe: ${entry.type}`, 'info');
             }
+
             Events.emit('media-update', { list: this.getList(), count: this.mediaUrls.size });
         }
 
