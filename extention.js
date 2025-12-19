@@ -1954,6 +1954,7 @@
     class MediaCapture {
         constructor() {
             this.mediaUrls = STATE.mediaUrls;
+            this.blobCache = new Map();
             this.scanInterval = null;
             this.lastScanTime = 0;
             this.scanThrottle = 2000;
@@ -2044,6 +2045,7 @@
                 if (blob instanceof Blob) {
                     const type = blob.type || '';
                     if (type.includes('video') || type.includes('audio') || type.includes('mpegurl')) {
+                        self.blobCache.set(url, blob);
                         self.add(url, 'BLOB', {
                             blobType: type,
                             blobSize: blob.size,
@@ -3209,6 +3211,43 @@
             this.floatBtn = btn;
         }
 
+        saveSettings() {
+            // --- Features ---
+            Object.keys(CONFIG.features).forEach(k => {
+                const el = document.getElementById(`uadbp-cfg-${k}`);
+                if (el) CONFIG.features[k] = el.checked;
+            });
+
+            // --- UI ---
+            CONFIG.ui.theme = document.getElementById('uadbp-cfg-ui-theme').checked ? 'dark' : 'light';
+            CONFIG.ui.compactMode = document.getElementById('uadbp-cfg-ui-compact').checked;
+            CONFIG.ui.showNotifications = document.getElementById('uadbp-cfg-ui-notif').checked;
+
+            // --- Storage ---
+            CONFIG.storage.autoSave = document.getElementById('uadbp-cfg-store-auto').checked;
+
+            // --- Download ---
+            const maxDl = document.getElementById('uadbp-cfg-dl-max');
+            if (maxDl) CONFIG.download.maxConcurrent = parseInt(maxDl.value) || 8;
+
+            // --- Proxy ---
+            const proxySel = document.getElementById('uadbp-cfg-proxy');
+            if (proxySel) CONFIG.proxy.currentIndex = parseInt(proxySel.value);
+
+            // --- Persist ---
+            if (typeof GM_setValue !== 'undefined') {
+                GM_setValue('uadbp_config_features', JSON.stringify(CONFIG.features));
+                GM_setValue('uadbp_config_ui', JSON.stringify(CONFIG.ui));
+                GM_setValue('uadbp_config_dl', JSON.stringify({ maxConcurrent: CONFIG.download.maxConcurrent }));
+                GM_setValue('uadbp_config_proxy', JSON.stringify({ currentIndex: CONFIG.proxy.currentIndex }));
+                GM_setValue('uadbp_config_storage', JSON.stringify(CONFIG.storage));
+            }
+
+            logger.log('Settings saved. Reloading to apply changes...', 'success');
+            Utils.notify('Settings saved. Reloading page...');
+            setTimeout(() => window.location.reload(), 800);
+        }
+
         bindEvents() {
             const p = this.panel;
             if (!p) return;
@@ -3251,25 +3290,9 @@
                 if (streamRecorder.isRecording) { streamRecorder.stop(); return; }
                 const video = document.querySelector('video');
                 if (video) streamRecorder.start(video);
-                CONFIG.ui.showNotifications = document.getElementById('uadbp-cfg-ui-notif').checked;
-                CONFIG.storage.autoSave = document.getElementById('uadbp-cfg-store-auto').checked;
-
-                const maxDl = document.getElementById('uadbp-cfg-dl-max');
-                if (maxDl) CONFIG.download.maxConcurrent = parseInt(maxDl.value) || 4;
-
-                const proxySel = document.getElementById('uadbp-cfg-proxy');
-                if (proxySel) CONFIG.proxy.currentIndex = parseInt(proxySel.value);
-
-                if (typeof GM_setValue !== 'undefined') {
-                    GM_setValue('uadbp_config_features', JSON.stringify(CONFIG.features));
-                    GM_setValue('uadbp_config_ui', JSON.stringify(CONFIG.ui));
-                    GM_setValue('uadbp_config_dl', JSON.stringify({ maxConcurrent: CONFIG.download.maxConcurrent }));
-                    GM_setValue('uadbp_config_proxy', JSON.stringify({ currentIndex: CONFIG.proxy.currentIndex, servers: CONFIG.proxy.servers }));
-                    GM_setValue('uadbp_config_storage', JSON.stringify(CONFIG.storage));
-                }
-                logger.log('Settings saved. Reloading...', 'success');
-                setTimeout(() => location.reload(), 1000);
             };
+
+            document.getElementById('uadbp-save-cfg').onclick = () => this.saveSettings();
 
             document.getElementById('uadbp-reset-cfg').onclick = () => {
                 if (confirm('Reset all settings to default?')) {
@@ -3489,8 +3512,23 @@
         filterMedia() { this.updateMediaList(); }
 
         async downloadBest() {
+            const blobs = mediaCapture.getByType('BLOB');
+            if (blobs.length > 0) {
+                const blobUrl = blobs[0].url;
+                const blobData = mediaCapture.blobCache.get(blobUrl);
+                if (blobData) {
+                    const filename = `blob_video_${Date.now()}.${blobData.type.split('/')[1] || 'bin'}`;
+                    hlsDownloader.saveBlob(blobData, filename);
+                    logger.log(`Downloading captured BLOB: ${filename}`, 'success');
+                } else {
+                    Utils.notify('BLOB data not found in cache.', 'error');
+                    logger.log(`BLOB data for ${blobUrl} not found in cache.`, 'error');
+                }
+                return;
+            }
+
             const hls = mediaCapture.getByType('HLS');
-            if (hls.length === 0) { Utils.notify('No HLS streams found', 'warning'); logger.log('No HLS streams found', 'warning'); return; }
+            if (hls.length === 0) { Utils.notify('No HLS streams or BLOBs found', 'warning'); logger.log('No HLS streams or BLOBs found', 'warning'); return; }
             await this.startDownload(hls[0].url);
         }
 
