@@ -1493,7 +1493,12 @@
             logger.log(`Parsing M3U8: ${url.substring(0, 60)}...`, 'info');
 
             const content = await proxyManager.fetchText(url);
-            const lines = content.split('\n').map(l => l.trim()).filter(l => l);
+            // ⚡ Bolt Optimization: Replaced .split().map().filter() with a while loop
+            // to parse the M3U8 manifest. This avoids creating intermediate arrays,
+            // reducing memory allocation and improving parsing speed for large playlists.
+            const lines = content;
+            let currentIndex = 0;
+
 
             const result = {
                 type: 'unknown',
@@ -1510,8 +1515,19 @@
             let currentDuration = 0;
             let currentKey = null;
 
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
+            while (currentIndex < lines.length) {
+                const newlineIndex = lines.indexOf('\n', currentIndex);
+                let line = (newlineIndex !== -1 ? lines.substring(currentIndex, newlineIndex) : lines.substring(currentIndex)).trim();
+
+                if (newlineIndex !== -1) {
+                    currentIndex = newlineIndex + 1;
+                } else {
+                    currentIndex = lines.length;
+                }
+
+                if (!line) {
+                    continue;
+                }
 
                 // Master playlist - quality variants
                 if (line.startsWith('#EXT-X-STREAM-INF')) {
@@ -1520,7 +1536,23 @@
                     const bandwidth = line.match(/BANDWIDTH=(\d+)/);
                     const codecs = line.match(/CODECS="([^"]+)"/);
                     const audio = line.match(/AUDIO="([^"]+)"/);
-                    const nextLine = lines[i + 1];
+
+                    // The next non-empty line is the URL
+                    let nextLine = '';
+                    while (currentIndex < lines.length) {
+                        const nextNewlineIndex = lines.indexOf('\n', currentIndex);
+                        nextLine = (nextNewlineIndex !== -1 ? lines.substring(currentIndex, nextNewlineIndex) : lines.substring(currentIndex)).trim();
+
+                        if (nextNewlineIndex !== -1) {
+                           currentIndex = nextNewlineIndex + 1;
+                        } else {
+                           currentIndex = lines.length;
+                        }
+
+                        if (nextLine) {
+                            break;
+                        }
+                    }
 
                     if (nextLine && !nextLine.startsWith('#')) {
                         result.qualities.push({
@@ -1535,7 +1567,7 @@
                 }
 
                 // Audio tracks
-                if (line.startsWith('#EXT-X-MEDIA') && line.includes('TYPE=AUDIO')) {
+                else if (line.startsWith('#EXT-X-MEDIA') && line.includes('TYPE=AUDIO')) {
                     const name = line.match(/NAME="([^"]+)"/);
                     const uri = line.match(/URI="([^"]+)"/);
                     const language = line.match(/LANGUAGE="([^"]+)"/);
@@ -1552,7 +1584,7 @@
                 }
 
                 // Subtitles
-                if (line.startsWith('#EXT-X-MEDIA') && line.includes('TYPE=SUBTITLES')) {
+                else if (line.startsWith('#EXT-X-MEDIA') && line.includes('TYPE=SUBTITLES')) {
                     const name = line.match(/NAME="([^"]+)"/);
                     const uri = line.match(/URI="([^"]+)"/);
                     const language = line.match(/LANGUAGE="([^"]+)"/);
@@ -1567,7 +1599,7 @@
                 }
 
                 // Encryption key
-                if (line.startsWith('#EXT-X-KEY')) {
+                else if (line.startsWith('#EXT-X-KEY')) {
                     const method = line.match(/METHOD=([^,]+)/);
                     const keyUri = line.match(/URI="([^"]+)"/);
                     if (method && method[1] !== 'NONE') {
@@ -1580,13 +1612,13 @@
                 }
 
                 // Segment duration
-                if (line.startsWith('#EXTINF:')) {
+                else if (line.startsWith('#EXTINF:')) {
                     const dur = parseFloat(line.split(':')[1]);
                     if (!isNaN(dur)) currentDuration = dur;
                 }
 
                 // Segment URL
-                if (!line.startsWith('#') && line.length > 0) {
+                else if (!line.startsWith('#') && line.length > 0) {
                     const isSegment = line.endsWith('.ts') || line.includes('.ts?') ||
                         line.endsWith('.m4s') || line.includes('.m4s?') ||
                         line.includes('segment') || line.includes('chunk') ||
